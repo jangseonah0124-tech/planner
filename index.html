@@ -47,6 +47,10 @@
   --red-bg:#4f2724; --red-fg:#f2a49c; color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+.bkbanner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;margin:-6px 0 16px;border-radius:8px;background:var(--yellow-bg);color:var(--yellow-fg);font-size:13.5px}
+.bkbanner span{margin-right:auto}
+.bkbox{display:grid;gap:8px}
+.bkbox .btn{text-align:center;padding:9px 12px}
 html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 body{margin:0}
 .login{max-width:340px;margin:12vh auto 0;display:grid;gap:12px}
@@ -183,7 +187,8 @@ textarea.free:focus{outline:none}
 </div>
 <div class="wrap" id="app" hidden>
   <h1>📒 내 플래너</h1>
-  <p class="sub"><span class="status" id="status">불러오는 중…</span></p>
+  <p class="sub"><span class="status" id="status">불러오는 중…</span> · <button class="linkbtn" id="backupBtn">백업</button></p>
+  <div class="bkbanner" id="bkBanner" hidden><span id="bkText"></span><button class="btn primary" id="bkNow">지금 백업</button><button class="btn" id="bkLater">나중에</button></div>
   <nav id="tabs">
     <button data-v="cal" class="on">📅 캘린더</button>
     <button data-v="all">📋 전체 일정</button>
@@ -201,7 +206,7 @@ textarea.free:focus{outline:none}
 const SUPABASE_URL = "https://vipkclhichdaybgaqyrz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_PZtE_xn1cwq52qqTDbWssw_YzSA1BKI";
 /* ================================================== */
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = window.supabase ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;  // 오프라인으로 처음 열면 null
 const COLORS=["gray","brown","orange","yellow","green","blue","purple","pink","red"];
 const KEY="sunah-planner-v1";
 const pad=n=>String(n).padStart(2,"0");
@@ -229,18 +234,40 @@ if(S.memo==null)S.memo="";
 }
 const DOW="일월화수목금토";
 const setStatus=t=>document.getElementById("status").textContent=t;
-const save=()=>{dirty=true;setStatus("저장 중…");clearTimeout(saveTimer);saveTimer=setTimeout(push,700)};
+const timeNow=()=>new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+const OFF="오프라인 · 기기에 저장됨, 연결되면 자동 업로드";
+
+/* ---- 기기 안 사본 (오프라인용) ---- */
+const CACHE="planner-cache-v1";
+function cacheWrite(){try{localStorage.setItem(CACHE,JSON.stringify({uid:userId,dirty,data:S}))}catch(e){}}
+function cacheRead(){try{return JSON.parse(localStorage.getItem(CACHE))}catch(e){return null}}
+
+/* ---- 저장: 기기에 바로, 서버엔 0.7초 뒤 ---- */
+let ver=0, pushing=false;
+const save=()=>{ver++;dirty=true;cacheWrite();setStatus("저장 중…");clearTimeout(saveTimer);saveTimer=setTimeout(push,700)};
 async function push(){
-  const {error}=await sb.from("planner").upsert({user_id:userId,data:S,updated_at:new Date().toISOString()});
-  if(error){setStatus("저장 실패 · 인터넷 연결 확인");console.error(error);return}
-  dirty=false;setStatus("저장됨 · "+new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}));
+  if(!sb||!userId||!S)return;
+  if(!navigator.onLine){setStatus(OFF);return}
+  if(pushing){clearTimeout(saveTimer);saveTimer=setTimeout(push,700);return}
+  pushing=true;const v=ver;
+  try{
+    const {error}=await sb.from("planner").upsert({user_id:userId,data:S,updated_at:new Date().toISOString()});
+    if(error)throw error;
+    if(v===ver){dirty=false;cacheWrite()}
+    setStatus("저장됨 · "+timeNow());
+  }catch(e){console.error(e);setStatus(OFF)}
+  finally{pushing=false}
 }
 async function pull(){
-  const {data,error}=await sb.from("planner").select("data").eq("user_id",userId).maybeSingle();
-  if(error){setStatus("불러오기 실패 · 인터넷 연결 확인");console.error(error);return false}
-  if(data&&data.data&&data.data.cats){S=data.data;migrate();setStatus("동기화됨")}
-  else{S=structuredClone(seed);migrate();await push()}
-  return true;
+  if(!sb||!userId)return false;
+  if(dirty){await push();return false}   // 기기에서 바꾼 게 아직 안 올라갔으면 그것부터 올림
+  try{
+    const {data,error}=await sb.from("planner").select("data").eq("user_id",userId).maybeSingle();
+    if(error)throw error;
+    if(data&&data.data&&data.data.cats){S=data.data;migrate();cacheWrite();setStatus("동기화됨 · "+timeNow())}
+    else{S=structuredClone(seed);migrate();await push()}
+    return true;
+  }catch(e){console.error(e);if(S)setStatus("오프라인 · 기기에 저장된 내용 표시 중");return false}
 }
 const cat=id=>S.cats.find(c=>c.id===id)||{name:"(분류 없음)",color:"gray"};
 const isHex=c=>/^#[0-9a-f]{6}$/i.test(c||"");
@@ -540,31 +567,109 @@ function catModal(c){
   r.querySelector("#c-name").addEventListener("input",e=>r.querySelector("#c-prev").textContent=e.target.value||"새 분류");
 }
 
+function showApp(){document.getElementById("loginBox").hidden=true;document.getElementById("app").hidden=false}
+function fromCache(uid){
+  const c=cacheRead();
+  if(!c||!c.data||!c.data.cats||(uid&&c.uid!==uid))return false;
+  userId=c.uid;S=c.data;dirty=!!c.dirty;migrate();showApp();render();checkBackup();return true;
+}
 async function start(session){
   userId=session.user.id;
-  document.getElementById("loginBox").hidden=true;
-  document.getElementById("app").hidden=false;
-  if(await pull())render();
+  if(fromCache(userId))setStatus(dirty?"업로드 대기 중…":"불러오는 중…");
+  const ok=await pull();
+  if(ok){showApp();render();checkBackup()}
+  else if(!S){showApp();setStatus("처음 한 번은 인터넷 연결이 필요함")}
 }
+const withTimeout=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]);
 async function init(){
-  const {data:{session}}=await sb.auth.getSession();
+  if(!sb){if(fromCache())setStatus("오프라인 · 기기에 저장된 내용 표시 중");else document.getElementById("loginBox").hidden=false;return}
+  let session=null;
+  try{const res=await withTimeout(sb.auth.getSession(),4000);session=res&&res.data&&res.data.session}catch(e){}
   if(session)return start(session);
+  if(!navigator.onLine&&fromCache()){setStatus("오프라인 · 기기에 저장된 내용 표시 중");return}
   document.getElementById("loginBox").hidden=false;
 }
 document.getElementById("l-go").onclick=async()=>{
   const err=document.getElementById("l-err");err.textContent="";
+  if(!sb){err.textContent="인터넷 연결 후 다시 시도";return}
   const {data,error}=await sb.auth.signInWithPassword({email:document.getElementById("l-email").value.trim(),password:document.getElementById("l-pw").value});
   if(error){err.textContent="로그인 실패: 이메일·비밀번호 확인";return}
   start(data.session);
 };
 document.getElementById("l-pw").onkeydown=e=>{if(e.key==="Enter")document.getElementById("l-go").click()};
+
 // 다른 기기에서 바꾼 내용: 앱으로 돌아올 때 새로 불러오기
 document.addEventListener("visibilitychange",async()=>{
-  if(document.visibilityState!=="visible"||!userId||dirty)return;
+  if(document.visibilityState!=="visible"||!userId)return;
   if(document.getElementById("modalRoot").innerHTML)return;
   const a=document.activeElement; if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT"))return;
   if(await pull())render();
 });
+// 인터넷 다시 연결되면 밀린 저장 올리기
+window.addEventListener("online",async()=>{
+  if(!sb){location.reload();return}
+  if(!userId)return;
+  if(dirty)await push();else if(await pull())render();
+});
+window.addEventListener("offline",()=>{if(S)setStatus(OFF)});
+
+/* ---- 백업 ---- */
+const daysSince=iso=>iso?Math.floor((Date.now()-new Date(iso))/864e5):null;
+function downloadBackup(){
+  const blob=new Blob([JSON.stringify({app:"planner",exportedAt:new Date().toISOString(),data:S})],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`planner-backup-${todayStr()}.json`;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  S.lastBackup=new Date().toISOString();save();checkBackup();
+}
+function checkBackup(){
+  const b=document.getElementById("bkBanner");
+  let snoozed=false;try{snoozed=sessionStorage.getItem("bk-later")===todayStr()}catch(e){}
+  const d=daysSince(S&&S.lastBackup);
+  if(!S||snoozed||(d!==null&&d<7)){b.hidden=true;return}
+  document.getElementById("bkText").textContent=d===null?"아직 백업한 적 없음. 기록을 파일로 한 번 저장해두기":`마지막 백업 ${d}일 전 · 일주일에 한 번 백업 권장`;
+  b.hidden=false;
+}
+document.getElementById("bkNow").onclick=()=>{if(S)downloadBackup()};
+document.getElementById("bkLater").onclick=()=>{try{sessionStorage.setItem("bk-later",todayStr())}catch(e){}document.getElementById("bkBanner").hidden=true};
+document.getElementById("backupBtn").onclick=()=>{if(S)backupModal()};
+function backupModal(){
+  const r=document.getElementById("modalRoot");
+  const last=S.lastBackup?new Date(S.lastBackup).toLocaleDateString("ko-KR"):"없음";
+  r.innerHTML=`<div class="shade"><div class="modal" role="dialog">
+    <h4>백업</h4>
+    <p class="note" style="margin:0">마지막 백업: ${last}<br>일정·오늘 할 일·스케줄표·메모 전체가 파일 하나로 저장됨.</p>
+    <div class="bkbox">
+      <button class="btn primary" data-b="save">백업 파일 저장</button>
+      <label class="btn">백업 파일에서 복원<input type="file" id="bkFile" accept=".json,application/json" hidden></label>
+    </div>
+    <div id="bkConfirm"></div>
+    <div class="acts"><button class="btn" data-b="close">닫기</button></div>
+  </div></div>`;
+  let pending=null;
+  const close=()=>r.innerHTML="";
+  r.querySelector(".shade").onclick=e=>{
+    if(e.target.classList.contains("shade"))return close();
+    const a=e.target.closest("[data-b]");if(!a)return;
+    if(a.dataset.b==="close")close();
+    if(a.dataset.b==="save"){downloadBackup();close()}
+    if(a.dataset.b==="no"){pending=null;r.querySelector("#bkConfirm").innerHTML=""}
+    if(a.dataset.b==="yes"&&pending){S=pending;migrate();save();close();render();checkBackup()}
+  };
+  r.querySelector("#bkFile").onchange=e=>{
+    const f=e.target.files[0];if(!f)return;
+    const box=r.querySelector("#bkConfirm");
+    f.text().then(t=>{
+      const j=JSON.parse(t), d=j&&j.data?j.data:j;
+      if(!d||!Array.isArray(d.cats)||!Array.isArray(d.events))throw 0;
+      pending=d;
+      const when=j.exportedAt?new Date(j.exportedAt).toLocaleDateString("ko-KR"):"날짜 모름";
+      box.innerHTML=`<p class="note" style="margin:0 0 8px;color:var(--fg)">${when} 백업 (일정 ${d.events.length}개)으로 지금 데이터를 바꿀까? 지금 내용은 이 파일 내용으로 덮어써짐.</p>
+        <div class="acts"><button class="btn" data-b="no">취소</button><button class="btn primary" data-b="yes">복원</button></div>`;
+    }).catch(()=>{box.innerHTML=`<p class="err">플래너 백업 파일이 아님. 'planner-backup-날짜.json' 파일을 골라줘.</p>`});
+  };
+}
+
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 init();
 </script>
 </body>
