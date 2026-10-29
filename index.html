@@ -179,7 +179,7 @@ textarea.free:focus{outline:none}
 </div>
 <div class="wrap" id="app" hidden>
   <h1>📒 내 플래너</h1>
-  <p class="sub"><span class="status" id="status">불러오는 중…</span> · <button class="linkbtn" id="logout">로그아웃</button></p>
+  <p class="sub"><span class="status" id="status">불러오는 중…</span></p>
   <nav id="tabs">
     <button data-v="cal" class="on">📅 캘린더</button>
     <button data-v="all">📋 전체 일정</button>
@@ -208,30 +208,20 @@ const uid=()=>Math.random().toString(36).slice(2,9);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 const seed={
-  cats:[
-    {id:"c1",name:"‼️ 수행",color:"red"},
-    {id:"c2",name:"✅ 대회",color:"green"},
-    {id:"c3",name:"❄️ 봉사",color:"blue"},
-    {id:"c4",name:"🌱 지필",color:"yellow"},
-    {id:"c5",name:"🌀 기타",color:"purple"}
-  ],
-  events:[
-    ["2026-11-03","생명 논문 발표","c1",0],["2026-11-04","Cal 말하기 시험","c1",0],["2026-11-05","영발토 토론 (워라벨)","c1",0],
-    ["2026-10-02","생활과학 건강과과학 시험","c1",1],["2026-10-08","물리 인터스텔라 감상문","c1",1],
-    ["2026-10-09","무이네 여행","c5",1,"2026-10-11"],["2026-10-12","생활과학 식품과과학 시험","c1",1],
-    ["2026-10-13","생명과학","c4",1],["2026-10-14","영발토 단어 시험","c1",1],["2026-10-14","화학 반응속도 시험","c1",1],
-    ["2026-10-14","고수 시험","c1",1],["2026-10-15","화학 전기화학 시험","c1",1],["2026-10-15","Cal 시험","c1",1],
-    ["2026-10-25","생명 논문 분석","c1",1],["2026-09-03","생명 패들렛","c1",1,null,"4시까지 제출"]
-  ].map(([date,name,cat,done,end,memo])=>({id:uid(),date,end:end||"",name,cat,done:!!done,memo:memo||""})),
-  todos:{date:"",items:[]},
-  memo:""
+  cats:[{"id": "c1", "name": "‼️ 수행", "color": "red"}, {"id": "c2", "name": "✅ 대회", "color": "green"}, {"id": "c3", "name": "❄️ 봉사", "color": "blue"}, {"id": "c4", "name": "🌱 지필", "color": "yellow"}, {"id": "c5", "name": "🌀 기타", "color": "purple"}, {"id": "c6", "name": "🍀 최종발표", "color": "brown"}, {"id": "c7", "name": "✨ 입시", "color": "orange"}, {"id": "c8", "name": "🩷 개인", "color": "pink"}],
+  events:[],
+  days:{},
+  sched:[],
+  memo:"",
+  weekMemo:""
 };
 let S=null, userId=null, saveTimer=null, dirty=false;
 function migrate(){
 if(!S.days){S.days={};if(S.todos&&S.todos.date&&S.todos.items&&S.todos.items.length)S.days[S.todos.date]=S.todos.items}
 delete S.todos;
-if(!S.sched)S.sched=[{id:uid(),name:"운동",color:"green",days:[2,4],start:"18:00",end:"19:00"}];
+if(!S.sched)S.sched=[];
 if(S.weekMemo==null)S.weekMemo="";
+if(S.memo==null)S.memo="";
 }
 const DOW="일월화수목금토";
 const setStatus=t=>document.getElementById("status").textContent=t;
@@ -411,7 +401,7 @@ function schedModal(b,day,hour){
   b=b||{name:"",color:"blue",days:day!=null?[day]:[],start:st,end:en};
   let col=b.color, days=[...b.days];
   modal(`<h4>${isNew?"고정 일정 추가":"고정 일정 수정"}</h4>
-    <label class="field">이름<input id="s-name" value="${esc(b.name)}" placeholder="예: 운동"></label>
+    <label class="field">이름<input id="s-name" value="${esc(b.name)}"></label>
     <div class="field">색상<div class="swatches">${COLORS.map(k=>`<button class="sw ${k===col?"on":""}" data-sw="${k}" style="background:var(--${k}-bg)" aria-label="${k}"></button>`).join("")}</div></div>
     <div class="field">요일<div class="dts">${[...DOW].map((d,i)=>`<button class="dt ${days.includes(i)?"on":""}" data-dt="${i}">${d}</button>`).join("")}</div></div>
     <div class="two">
@@ -498,7 +488,7 @@ function evModal(ev,date){
   const isNew=!ev;
   ev=ev||{name:"",date,end:"",cat:S.cats[0]?.id||"",memo:"",done:false};
   modal(`<h4>${isNew?"일정 추가":"일정 수정"}</h4>
-    <label class="field">이름<input id="f-name" value="${esc(ev.name)}" placeholder="예: 생명 논문 발표"></label>
+    <label class="field">이름<input id="f-name" value="${esc(ev.name)}"></label>
     <div class="two">
       <label class="field">날짜<input type="date" id="f-date" value="${ev.date}"></label>
       <label class="field">종료일 (여러 날일 때)<input type="date" id="f-end" value="${ev.end}"></label>
@@ -519,7 +509,7 @@ function catModal(c){
   const isNew=!c;
   let col=c?c.color:"blue";
   modal(`<h4>${isNew?"분류 추가":"분류 수정"}</h4>
-    <label class="field">이름<input id="c-name" value="${c?esc(c.name):""}" placeholder="예: 💪 운동"></label>
+    <label class="field">이름<input id="c-name" value="${c?esc(c.name):""}"></label>
     <div class="field">색상<div class="swatches">${COLORS.map(k=>`<button class="sw ${k===col?"on":""}" data-sw="${k}" style="background:var(--${k}-bg)" aria-label="${k}"></button>`).join("")}</div></div>
     <div class="field">미리보기<span><span class="tag" id="c-prev" style="${tagStyle(col)}">${c?esc(c.name):"새 분류"}</span></span></div>`,
   r=>{
@@ -555,7 +545,6 @@ document.getElementById("l-go").onclick=async()=>{
   start(data.session);
 };
 document.getElementById("l-pw").onkeydown=e=>{if(e.key==="Enter")document.getElementById("l-go").click()};
-document.getElementById("logout").onclick=async()=>{await sb.auth.signOut();location.reload()};
 // 다른 기기에서 바꾼 내용: 앱으로 돌아올 때 새로 불러오기
 document.addEventListener("visibilitychange",async()=>{
   if(document.visibilityState!=="visible"||!userId||dirty)return;
