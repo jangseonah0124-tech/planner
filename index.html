@@ -120,6 +120,9 @@ textarea.free:focus{outline:none}
 .swatches{display:flex;flex-wrap:wrap;gap:6px}
 .sw{width:30px;height:30px;border-radius:6px;border:2px solid transparent;cursor:pointer}
 .sw.on{border-color:var(--fg)}
+.sw.custom{position:relative;overflow:hidden;background:conic-gradient(#e9483f,#f0b429,#3bb273,#2f9bd6,#7d5fd3,#e05aa0,#e9483f)}
+.sw.custom input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0}
+.sw.custom.on::after{content:"";position:absolute;inset:8px;border-radius:50%;background:rgba(255,255,255,.85)}
 .acts{display:flex;gap:8px;justify-content:flex-end}
 .acts .del{margin-right:auto;color:var(--red-fg)}
 /* today history */
@@ -239,7 +242,23 @@ async function pull(){
   return true;
 }
 const cat=id=>S.cats.find(c=>c.id===id)||{name:"(분류 없음)",color:"gray"};
-const tagStyle=c=>`background:var(--${c}-bg);color:var(--${c}-fg)`;
+const isHex=c=>/^#[0-9a-f]{6}$/i.test(c||"");
+const contrast=h=>{const n=parseInt(h.slice(1),16),r=n>>16,g=n>>8&255,b=n&255;return(r*299+g*587+b*114)/1000>150?"#2b2a28":"#ffffff"};
+const tagStyle=c=>isHex(c)?`background:${c};color:${contrast(c)}`:`background:var(--${c}-bg);color:var(--${c}-fg)`;
+function swatchHtml(col){
+  return`<div class="swatches">${COLORS.map(k=>`<button class="sw ${k===col?"on":""}" data-sw="${k}" style="background:var(--${k}-bg)" aria-label="${k}"></button>`).join("")}
+    <label class="sw custom ${isHex(col)?"on":""}" title="색상표에서 직접 고르기" ${isHex(col)?`style="background:${col}"`:""}><input type="color" id="pick" value="${isHex(col)?col:"#4a90d9"}" aria-label="색상표"></label></div>`;
+}
+function bindSwatches(r,onPick){
+  const all=()=>r.querySelectorAll(".sw"), cus=r.querySelector(".sw.custom");
+  r.querySelector(".swatches").addEventListener("click",e=>{
+    const b=e.target.closest("[data-sw]");if(!b)return;
+    all().forEach(x=>x.classList.toggle("on",x===b));cus.style.background="";onPick(b.dataset.sw);
+  });
+  r.querySelector("#pick").addEventListener("input",e=>{
+    all().forEach(x=>x.classList.toggle("on",x===cus));cus.style.background=e.target.value;onPick(e.target.value);
+  });
+}
 
 let todoDate=todayStr(), showHist=false, histMonth=null, pick=false, pickYear=new Date().getFullYear();
 let view="cal", calMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1), openMemo=new Set();
@@ -402,7 +421,7 @@ function schedModal(b,day,hour){
   let col=b.color, days=[...b.days];
   modal(`<h4>${isNew?"고정 일정 추가":"고정 일정 수정"}</h4>
     <label class="field">이름<input id="s-name" value="${esc(b.name)}"></label>
-    <div class="field">색상<div class="swatches">${COLORS.map(k=>`<button class="sw ${k===col?"on":""}" data-sw="${k}" style="background:var(--${k}-bg)" aria-label="${k}"></button>`).join("")}</div></div>
+    <div class="field">색상${swatchHtml(col)}</div>
     <div class="field">요일<div class="dts">${[...DOW].map((d,i)=>`<button class="dt ${days.includes(i)?"on":""}" data-dt="${i}">${d}</button>`).join("")}</div></div>
     <div class="two">
       <label class="field">시작<input type="time" id="s-start" value="${b.start}" step="600"></label>
@@ -417,10 +436,7 @@ function schedModal(b,day,hour){
   },
   isNew?null:()=>{S.sched=S.sched.filter(x=>x!==b)});
   const r=document.getElementById("modalRoot");
-  r.querySelector(".swatches").addEventListener("click",e=>{
-    const x=e.target.closest("[data-sw]");if(!x)return;
-    col=x.dataset.sw;r.querySelectorAll(".sw").forEach(y=>y.classList.toggle("on",y===x));
-  });
+  bindSwatches(r,v=>col=v);
   r.querySelector(".dts").addEventListener("click",e=>{
     const x=e.target.closest("[data-dt]");if(!x)return;
     const i=Number(x.dataset.dt);days=days.includes(i)?days.filter(y=>y!==i):[...days,i];
@@ -510,7 +526,7 @@ function catModal(c){
   let col=c?c.color:"blue";
   modal(`<h4>${isNew?"분류 추가":"분류 수정"}</h4>
     <label class="field">이름<input id="c-name" value="${c?esc(c.name):""}"></label>
-    <div class="field">색상<div class="swatches">${COLORS.map(k=>`<button class="sw ${k===col?"on":""}" data-sw="${k}" style="background:var(--${k}-bg)" aria-label="${k}"></button>`).join("")}</div></div>
+    <div class="field">색상${swatchHtml(col)}</div>
     <div class="field">미리보기<span><span class="tag" id="c-prev" style="${tagStyle(col)}">${c?esc(c.name):"새 분류"}</span></span></div>`,
   r=>{
     const name=r.querySelector("#c-name").value.trim();
@@ -519,11 +535,7 @@ function catModal(c){
   },
   isNew||S.events.some(e=>e.cat===c.id)?null:()=>{S.cats=S.cats.filter(x=>x!==c)});
   const r=document.getElementById("modalRoot");
-  r.querySelector(".swatches").addEventListener("click",e=>{
-    const b=e.target.closest("[data-sw]");if(!b)return;e.stopPropagation();
-    col=b.dataset.sw;r.querySelectorAll(".sw").forEach(x=>x.classList.toggle("on",x===b));
-    r.querySelector("#c-prev").style.cssText=tagStyle(col);
-  });
+  bindSwatches(r,v=>{col=v;r.querySelector("#c-prev").style.cssText=tagStyle(col)});
   r.querySelector("#c-name").addEventListener("input",e=>r.querySelector("#c-prev").textContent=e.target.value||"새 분류");
 }
 
